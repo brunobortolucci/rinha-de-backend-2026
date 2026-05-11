@@ -1,0 +1,59 @@
+services:
+  api1:
+    build: .
+    container_name: api1
+    expose:
+      - "9999"
+    networks:
+      - rinha_2026_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "160MB"
+    restart: unless-stopped
+    environment:
+      - GOMAXPROCS=1
+      - GOMEMLIMIT=135MiB
+      - GOGC=100
+
+  api2:
+    build: .
+    container_name: api2
+    expose:
+      - "9999"
+    networks:
+      - rinha_2026_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "160MB"
+    restart: unless-stopped
+    environment:
+      - GOMAXPROCS=1
+      - GOMEMLIMIT=135MiB
+      - GOGC=100
+
+  lb:
+    image: haproxy:2.9-alpine
+    container_name: rinha_2026_lb
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - rinha_2026_net
+    depends_on:
+      - api1
+      - api2
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: "30MB"
+    restart: unless-stopped
+
+networks:
+  rinha_2026_net:
+    driver: bridge
