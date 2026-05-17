@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/brunobortolucci/rinha-de-backend-2026/internal/vector"
 )
 
 var ready atomic.Bool
@@ -53,10 +56,17 @@ func main() {
 
 func handleFraudScore(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	write, err := w.Write([]byte(`{"score": "Teste realizado com sucesso!"}`))
+	var req vector.Request
+	res := vector.Response{Approved: false, FraudScore: 0.8}
+	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
+		log.Printf("Decode falhou: %s\n", err)
 		return
 	}
-	log.Printf("write: %d\n", write)
+	log.Printf("Body recebido com sucesso, %+v\n", req)
+	err = json.NewEncoder(w).Encode(&res)
+	if err != nil {
+		log.Printf("Encode falhou: %s\n", err)
+		return
+	}
 }
