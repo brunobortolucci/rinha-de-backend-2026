@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,17 +18,11 @@ import (
 var ready atomic.Bool
 
 func main() {
+	opts := &slog.HandlerOptions{Level: slog.LevelError}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, opts))
+	slog.SetDefault(logger)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /ready",
-		func(w http.ResponseWriter, r *http.Request) {
-			if !ready.Load() {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			log.Printf("Servidor pronto!")
-		},
-	)
+	mux.HandleFunc("GET /ready", handleReady)
 	mux.HandleFunc("POST /fraud-score", handleFraudScore)
 	srv := &http.Server{
 		Addr:         ":9999",
@@ -41,7 +35,8 @@ func main() {
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen: %s\n", err)
+			slog.Error("erro ao iniciar o servidor", "err", err)
+			os.Exit(1)
 		}
 	}()
 	stop := make(chan os.Signal, 1)
@@ -50,7 +45,8 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("server shutdown: %s\n", err)
+		slog.Error("erro ao desligar o servidor", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -60,13 +56,17 @@ func handleFraudScore(w http.ResponseWriter, r *http.Request) {
 	res := vector.Response{Approved: false, FraudScore: 0.8}
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		log.Printf("Decode falhou: %s\n", err)
+		w.WriteHeader(http.StatusBadRequest)
+		slog.Error("decode falhou", "err", err)
 		return
 	}
-	log.Printf("Body recebido com sucesso, %+v\n", req)
-	err = json.NewEncoder(w).Encode(&res)
-	if err != nil {
-		log.Printf("Encode falhou: %s\n", err)
+	_ = json.NewEncoder(w).Encode(&res)
+}
+
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	if !ready.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
+	w.WriteHeader(http.StatusOK)
 }
