@@ -1,12 +1,12 @@
 package vector
 
 type Request struct {
-	Id              string          `json:"id,omitempty"`
-	Transaction     Transaction     `json:"transaction,omitempty"`
-	Customer        Customer        `json:"customer,omitempty"`
-	Merchant        Merchant        `json:"merchant,omitempty"`
-	Terminal        Terminal        `json:"terminal,omitempty"`
-	LastTransaction LastTransaction `json:"last_transaction"`
+	Id              string           `json:"id,omitempty"`
+	Transaction     Transaction      `json:"transaction,omitempty"`
+	Customer        Customer         `json:"customer,omitempty"`
+	Merchant        Merchant         `json:"merchant,omitempty"`
+	Terminal        Terminal         `json:"terminal,omitempty"`
+	LastTransaction *LastTransaction `json:"last_transaction"`
 }
 
 type Transaction struct {
@@ -22,8 +22,8 @@ type Customer struct {
 }
 
 type Merchant struct {
-	Id        string  `json:"id,omitempty"`
-	Mcc       string  `json:"mcc,omitempty"`
+	ID        string  `json:"id,omitempty"`
+	MCC       string  `json:"mcc,omitempty"`
 	AvgAmount float64 `json:"avg_amount"`
 }
 
@@ -34,7 +34,7 @@ type Terminal struct {
 }
 
 type LastTransaction struct {
-	TimeStamp     string  `json:"timestamp"`
+	Timestamp     string  `json:"timestamp"`
 	KmFromCurrent float64 `json:"km_from_current"`
 }
 
