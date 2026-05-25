@@ -2,4 +2,5 @@ TODO.md
 .idea/
 instructions/
 resources/references.json.gz
+resources/references.bin
 resources/request_sample.json
