@@ -1,7 +1,5 @@
 package vector
 
-import "time"
-
 func clamp(x float64) float64 {
 	if x < 0 {
 		return 0
@@ -18,9 +16,9 @@ func Vectorize(req Request, mccRisk map[string]float64, norm Normalization) ([14
 	v[1] = clamp(float64(req.Transaction.Installments) / norm.MaxInstallments)
 	v[2] = clamp((req.Transaction.Amount / req.Customer.AvgAmount) / norm.AmountVsAvgRatio)
 
-	t, err := time.Parse(time.RFC3339, req.Transaction.RequestedAt)
-	if err != nil {
-		t = time.Now()
+	t, ok := parseUTC(req.Transaction.RequestedAt)
+	if !ok {
+		return v, errInvalidTimestamp
 	}
 	v[3] = float64(t.Hour()) / 23
 
@@ -32,9 +30,9 @@ func Vectorize(req Request, mccRisk map[string]float64, norm Normalization) ([14
 		v[5] = -1
 		v[6] = -1
 	} else {
-		lastTs, err := time.Parse(time.RFC3339, req.LastTransaction.Timestamp)
-		if err != nil {
-			lastTs = time.Now()
+		lastTs, ok := parseUTC(req.LastTransaction.Timestamp)
+		if !ok {
+			return v, errInvalidTimestamp
 		}
 		minutes := t.Sub(lastTs).Minutes()
 		v[5] = clamp(minutes / norm.MaxMinutes)
