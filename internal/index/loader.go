@@ -8,18 +8,30 @@ import (
 	"unsafe"
 )
 
+// Formato v4 (RINHA004), little-endian, vetores int16 reordenados por cluster IVF:
+//
+//	[0:8]   magic "RINHA004"
+//	[8:12]  version = 4
+//	[12:16] count
+//	[16:20] nlist
+//	centroids  nlist × dims × int16
+//	offsets    (nlist+1) × uint32
+//	vectors    count × dims × int16
+//	labels     count × byte
 const (
-	magic       = "RINHA001"
-	version     = uint32(1)
+	magic       = "RINHA004"
+	version     = uint32(4)
 	dims        = 14
-	headerBytes = 16
-	floatBytes  = 4
+	headerBytes = 20
 )
 
 type Index struct {
-	Vectors []float32
-	Labels  []byte
-	Count   int
+	Centroids []int16
+	Offsets   []uint32
+	Vectors   []int16
+	Labels    []byte
+	Count     int
+	Nlist     int
 
 	raw []byte
 }
@@ -29,12 +41,7 @@ func Load(path string) (*Index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("abrir %s: %w", path, err)
 	}
-	defer func(f *os.File) {
-		err := f.Close()
-		if err != nil {
-
-		}
-	}(f)
+	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -60,23 +67,47 @@ func Load(path string) (*Index, error) {
 		return nil, fmt.Errorf("versão inválida: %d (esperava %d)", gotVersion, version)
 	}
 	count := int(binary.LittleEndian.Uint32(data[12:16]))
+	nlist := int(binary.LittleEndian.Uint32(data[16:20]))
 
-	vecBytes := count * dims * floatBytes
-	expected := headerBytes + vecBytes + count
+	centroidBytes := nlist * dims * 2
+	offsetBytes := (nlist + 1) * 4
+	vecBytes := count * dims * 2
+	expected := headerBytes + centroidBytes + offsetBytes + vecBytes + count
 	if size != expected {
 		_ = syscall.Munmap(data)
-		return nil, fmt.Errorf("tamanho inválido: %d (esperava %d para count=%d)", size, expected, count)
+		return nil, fmt.Errorf("tamanho inválido: %d (esperava %d para count=%d nlist=%d)", size, expected, count, nlist)
 	}
 
-	vectors := unsafe.Slice((*float32)(unsafe.Pointer(&data[headerBytes])), count*dims)
-	labels := data[headerBytes+vecBytes:]
+	centroidOffset := headerBytes
+	offsetOffset := centroidOffset + centroidBytes
+	vecOffset := offsetOffset + offsetBytes
+	labelOffset := vecOffset + vecBytes
+
+	centroids := unsafe.Slice((*int16)(unsafe.Pointer(&data[centroidOffset])), nlist*dims)
+	offsets := unsafe.Slice((*uint32)(unsafe.Pointer(&data[offsetOffset])), nlist+1)
+	vectors := unsafe.Slice((*int16)(unsafe.Pointer(&data[vecOffset])), count*dims)
+	labels := data[labelOffset : labelOffset+count]
 
 	return &Index{
-		Vectors: vectors,
-		Labels:  labels,
-		Count:   count,
-		raw:     data,
+		Centroids: centroids,
+		Offsets:   offsets,
+		Vectors:   vectors,
+		Labels:    labels,
+		Count:     count,
+		Nlist:     nlist,
+		raw:       data,
 	}, nil
+}
+
+func (i *Index) Warmup() {
+	if i.raw == nil {
+		return
+	}
+	var sum byte
+	for _, b := range i.raw {
+		sum ^= b
+	}
+	_ = sum
 }
 
 func (i *Index) Close() error {
@@ -85,6 +116,8 @@ func (i *Index) Close() error {
 	}
 	err := syscall.Munmap(i.raw)
 	i.raw = nil
+	i.Centroids = nil
+	i.Offsets = nil
 	i.Vectors = nil
 	i.Labels = nil
 	return err

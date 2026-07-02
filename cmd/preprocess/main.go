@@ -4,34 +4,35 @@ import (
 	"bufio"
 	"compress/gzip"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"io"
-	"math"
 	"os"
+	"time"
+	"unsafe"
+
+	"encoding/json"
+
+	"github.com/brunobortolucci/rinha-de-backend-2026/internal/ivf"
 )
 
 const (
 	inputPath  = "resources/references.json.gz"
 	outputPath = "resources/references.bin"
-	magic      = "RINHA001"
-	version    = uint32(1)
-	dims       = 14
+	magic      = "RINHA004"
+	version    = uint32(4)
+	dims       = ivf.Dims
+	nlist      = 1024
 	labelLegit = byte(0)
 	labelFraud = byte(1)
 )
 
 type reference struct {
-	Vector [dims]float32 `json:"vector"`
+	Vector [dims]float64 `json:"vector"`
 	Label  string        `json:"label"`
 }
 
 func main() {
 	if err := run(); err != nil {
-		_, err := fmt.Fprintln(os.Stderr, "preprocess:", err)
-		if err != nil {
-			return
-		}
+		fmt.Fprintln(os.Stderr, "preprocess:", err)
 		os.Exit(1)
 	}
 }
@@ -41,43 +42,18 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("abrir %s: %w", inputPath, err)
 	}
-	defer func(in *os.File) {
-		err := in.Close()
-		if err != nil {
-
-		}
-	}(in)
+	defer in.Close()
 
 	gz, err := gzip.NewReader(in)
 	if err != nil {
 		return fmt.Errorf("gzip: %w", err)
 	}
-	defer func(gz *gzip.Reader) {
-		err := gz.Close()
-		if err != nil {
+	defer gz.Close()
 
-		}
-	}(gz)
-
-	out, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("criar %s: %w", outputPath, err)
-	}
-	defer func(out *os.File) {
-		err := out.Close()
-		if err != nil {
-
-		}
-	}(out)
-
-	bw := bufio.NewWriterSize(out, 1<<20)
-
-	if _, err := bw.Write(make([]byte, 16)); err != nil {
-		return fmt.Errorf("reservar header: %w", err)
-	}
+	vectors := make([]int16, 0, 3_000_000*dims)
+	labels := make([]byte, 0, 3_000_000)
 
 	dec := json.NewDecoder(gz)
-
 	tok, err := dec.Token()
 	if err != nil {
 		return fmt.Errorf("token inicial: %w", err)
@@ -86,10 +62,7 @@ func run() error {
 		return fmt.Errorf("esperava '[' no início, recebi %v", tok)
 	}
 
-	labels := make([]byte, 0, 3_000_000)
-	vecBuf := make([]byte, dims*4)
 	var count uint32
-
 	for dec.More() {
 		var ref reference
 		if err := dec.Decode(&ref); err != nil {
@@ -97,11 +70,7 @@ func run() error {
 		}
 
 		for i := 0; i < dims; i++ {
-			bits := math.Float32bits(ref.Vector[i])
-			binary.LittleEndian.PutUint32(vecBuf[i*4:], bits)
-		}
-		if _, err := bw.Write(vecBuf); err != nil {
-			return fmt.Errorf("escrever vetor %d: %w", count, err)
+			vectors = append(vectors, ivf.Quantize(ref.Vector[i]))
 		}
 
 		switch ref.Label {
@@ -116,22 +85,54 @@ func run() error {
 		count++
 	}
 
-	if _, err := bw.Write(labels); err != nil {
-		return fmt.Errorf("escrever labels: %w", err)
-	}
+	fmt.Printf("preprocess: %d vetores lidos, rodando k-means (nlist=%d)...\n", count, nlist)
+	t0 := time.Now()
+	centroids, offsets, perm := ivf.Build(vectors, nlist)
+	fmt.Printf("preprocess: IVF construído em %s (%d clusters)\n", time.Since(t0).Round(time.Second), len(offsets)-1)
 
-	if err := bw.Flush(); err != nil {
-		return fmt.Errorf("flush: %w", err)
+	out, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("criar %s: %w", outputPath, err)
 	}
+	defer out.Close()
+	w := bufio.NewWriterSize(out, 1<<20)
 
-	header := make([]byte, 16)
+	header := make([]byte, 20)
 	copy(header[0:8], magic)
 	binary.LittleEndian.PutUint32(header[8:12], version)
 	binary.LittleEndian.PutUint32(header[12:16], count)
-	if _, err := out.WriteAt(header, 0); err != nil {
+	binary.LittleEndian.PutUint32(header[16:20], uint32(len(offsets)-1))
+	if _, err := w.Write(header); err != nil {
 		return fmt.Errorf("escrever header: %w", err)
 	}
 
+	if err := writeInt16s(w, centroids); err != nil {
+		return fmt.Errorf("escrever centróides: %w", err)
+	}
+
+	var buf4 [4]byte
+	for _, o := range offsets {
+		binary.LittleEndian.PutUint32(buf4[:], o)
+		if _, err := w.Write(buf4[:]); err != nil {
+			return fmt.Errorf("escrever offsets: %w", err)
+		}
+	}
+
+	for _, orig := range perm {
+		base := int(orig) * dims
+		if err := writeInt16s(w, vectors[base:base+dims]); err != nil {
+			return fmt.Errorf("escrever vetores: %w", err)
+		}
+	}
+	for _, orig := range perm {
+		if err := w.WriteByte(labels[orig]); err != nil {
+			return fmt.Errorf("escrever labels: %w", err)
+		}
+	}
+
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush: %w", err)
+	}
 	if err := out.Sync(); err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
@@ -140,10 +141,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("stat: %w", err)
 	}
-	fmt.Printf("preprocess: %d vetores, %d bytes em %s\n", count, info.Size(), outputPath)
-
-	if _, err := io.Copy(io.Discard, gz); err != nil {
-		return fmt.Errorf("drenar gzip: %w", err)
-	}
+	fmt.Printf("preprocess: %d bytes em %s (count=%d nlist=%d)\n",
+		info.Size(), outputPath, count, len(offsets)-1)
 	return nil
+}
+
+func writeInt16s(w *bufio.Writer, v []int16) error {
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&v[0])), len(v)*2)
+	_, err := w.Write(b)
+	return err
 }
