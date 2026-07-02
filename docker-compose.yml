@@ -10,12 +10,13 @@ services:
       resources:
         limits:
           cpus: "0.45"
-          memory: "160MB"
+          memory: "100MB"
     restart: unless-stopped
     environment:
-      - GOMAXPROCS=1
-      - GOMEMLIMIT=135MiB
+      - GOMAXPROCS=2
+      - GOMEMLIMIT=80MiB
       - GOGC=100
+      - NPROBE=${NPROBE:-8}
 
   api2:
     build: .
@@ -28,12 +29,13 @@ services:
       resources:
         limits:
           cpus: "0.45"
-          memory: "160MB"
+          memory: "100MB"
     restart: unless-stopped
     environment:
-      - GOMAXPROCS=1
-      - GOMEMLIMIT=135MiB
+      - GOMAXPROCS=2
+      - GOMEMLIMIT=80MiB
       - GOGC=100
+      - NPROBE=${NPROBE:-8}
 
   lb:
     image: haproxy:2.9-alpine
