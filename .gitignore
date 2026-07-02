@@ -1,5 +1,11 @@
 TODO.md
 .idea/
+/test/
+/api
+/preprocess
+*.pprof
+/cmd/bench/
+/cmd/validate/
 instructions/
 resources/references.json.gz
 resources/references.bin
